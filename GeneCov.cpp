@@ -27,7 +27,7 @@ int main(int argc, char* argv[]) {
 void GFFcont::read_coverage(string covF, GFFcont* gff) {
 	istream *opt = NULL;
 	string line;
-	string goF = covF + ".pergene", coF = covF + ".percontig";
+	string goF = covF + ".pergene", coF = covF + ".percontig", coMF = covF + ".median.percontig" , goMF = covF + ".median.pergene";
 	string geneStatsF = covF + ".geneStats", wiF = covF + ".window";
 	string countF = covF + ".count_pergene";
 	float geneCovCutoff = 0.1f;
@@ -37,7 +37,7 @@ void GFFcont::read_coverage(string covF, GFFcont* gff) {
 		exit(63);
 	}
 
-	ofstream genesOut, ctgOut, winOut, CountsOut;
+	ofstream genesOut, ctgOut, winOut, CountsOut, genesMedOut, ctgMedOut;
 	//first write stats on genes
 	genesOut.open(geneStatsF.c_str());
 	genesOut << "GeneNumber\tAvgGeneLength\tAvgComplGeneLength\tBpGenes\tBpNotGenes\t";
@@ -77,6 +77,13 @@ void GFFcont::read_coverage(string covF, GFFcont* gff) {
 	if (!genesOut) { cerr << "Cant open out1 file " << goF << endl; exit(34); }
 
 	
+	genesMedOut.open(goMF.c_str());
+	//set formatting
+	genesMedOut.setf(std::ios_base::fixed, std::ios_base::floatfield);
+	genesMedOut.precision(2);
+	if (!genesMedOut) { cerr << "Cant open out1b file " << goMF << endl; exit(34); }
+
+	
 	CountsOut.open(countF.c_str());
 	//set formatting
 	CountsOut.setf(std::ios_base::fixed, std::ios_base::floatfield);
@@ -85,6 +92,12 @@ void GFFcont::read_coverage(string covF, GFFcont* gff) {
 
 	ctgOut.open(coF.c_str());
 	ctgOut.setf(std::ios_base::fixed, std::ios_base::floatfield); ctgOut.precision(2);
+	//median contig coverage.. might be better to get rid of random deviations
+	ctgMedOut.open(coMF.c_str());
+	ctgMedOut.setf(std::ios_base::fixed, std::ios_base::floatfield); ctgOut.precision(2);
+
+	
+
 	winOut.open(wiF.c_str());
 	winOut.setf(std::ios_base::fixed, std::ios_base::floatfield);
 	winOut.precision(2);
@@ -106,18 +119,17 @@ void GFFcont::read_coverage(string covF, GFFcont* gff) {
 		std::getline(ss, segs, '\t');//0
 		if (segs != currentChrStr) {//new chromosome container
 			if (!notCount) {//counted something, make connection
-				writeGeneCnts(curChr->second, cov, genesOut, CountsOut, geneCovCutoff);
+				writeGeneCnts(curChr->second, cov, genesOut, genesMedOut,CountsOut, geneCovCutoff);
 				makeWindowCnts(cov, winOut, curChr->second->getID());
 			}
 			//first write old counts out
 			if (currentChrStr != "") {
 				float ctgCov((float)chrCnt / (float)len);
-				if (ctgCov >= ctgCovCutoff) {
-					ctgOut << currentChrStr << "\t" << ctgCov << endl;
-				}
-				else {
-					ctgOut << currentChrStr << "\t0\n";
-				}
+				writeCtgCov(ctgCov, ctgCovCutoff, currentChrStr, ctgOut);
+				//and write median
+				float medCtCov = (float)CalcMHWScore(cov);
+				writeCtgCov(medCtCov, ctgCovCutoff, currentChrStr, ctgMedOut);
+
 			}
 			curChr = track.find(segs);
 			if (curChr == track.end()) {
@@ -174,39 +186,63 @@ void GFFcont::read_coverage(string covF, GFFcont* gff) {
 	cerr << "File read\n";
 #endif
 	if (!notCount) {//counted something, make connection
-		writeGeneCnts(curChr->second, cov, genesOut, CountsOut, geneCovCutoff);
+		writeGeneCnts(curChr->second, cov, genesOut, genesMedOut, CountsOut, geneCovCutoff);
 		makeWindowCnts(cov, winOut, curChr->second->getID());
+		
+		//write coverage
 		float ctgCov((float)chrCnt / (float)len);
 		if (dynami) {
 			ctgCov = (float)chrCnt / (float)cov.size();
 		}
-		if (ctgCov >= ctgCovCutoff) {
-			ctgOut << currentChrStr << "\t" << ctgCov << endl;
-		}
-		else {
-			ctgOut << currentChrStr << "\t0\n";
-		}
+		writeCtgCov(ctgCov, ctgCovCutoff, currentChrStr, ctgOut);
+		//and write median
+		float medCtCov = (float)CalcMHWScore(cov);
+		writeCtgCov(medCtCov, ctgCovCutoff, currentChrStr, ctgMedOut);
 
 	}
 
 	delete opt;
 	genesOut.close(); ctgOut.close(); winOut.close();
+	ctgMedOut.close(); genesMedOut.close();
 }
 
-void GFFcont::writeGeneCnts(Chromo* chr, const vector<int>& cov, ofstream& of, ofstream& cntsOF, float geneCovCutoff) {
+void GFFcont::writeCtgCov(float ctgCov, float ctgCovCutoff, string currentChrStr, ofstream& ctgOut){
+	if (ctgCov >= ctgCovCutoff) {
+		ctgOut << currentChrStr << "\t" << ctgCov << endl;
+	}
+	else {
+		ctgOut << currentChrStr << "\t0\n";
+	}
+}
+
+void GFFcont::writeGeneCnts(Chromo* chr, const vector<int>& cov, ofstream& of, ofstream& ofMed, ofstream& cntsOF, float geneCovCutoff) {
 	string chid = chr->getID();
 	int chsize = chr->size();
 	int cvsiz = (int)cov.size();
 	for (int i = 0; i < chsize; i++) {
-		float curcov(0);
-		for (int x = chr->getSt(); x < chr->getEn(); x++) {
+		float curcov(0); int x(chr->getSt());
+		uint sta (x);
+		for ( ; x < chr->getEn(); x++) {
 			if (x >= cvsiz) { break; }
 			curcov += (float)cov[x];
+			
 		}
+		//create subvector, to calc median of
+		vector<int> newVec(1, 0); // empty ini
+		if (sta < cov.size()) {
+			vector<int>::const_iterator first = cov.begin() + sta;
+			vector<int>::const_iterator last = cov.begin() + x;
+			newVec = vector<int>(first, last);
+		}
+		double medCov = CalcMHWScore(newVec);
+
 		float curCnt = curcov;
 		curcov /= chr->geneSize(); chr->idxIncr();
 		if (curcov >= geneCovCutoff) {
 			of << chid + "_" << i + 1 << "\t" << curcov << endl;
+		}
+		if (medCov >= geneCovCutoff) {
+			ofMed << chid + "_" << i + 1 << "\t" << medCov << endl;
 		}
 		curCnt /= readL;
 		if (curCnt >= geneCovCutoff) {

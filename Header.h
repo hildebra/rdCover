@@ -61,7 +61,8 @@ public:
 	~GFFcont() {for (auto itr = track.begin(); itr != track.end(); ++itr) {		delete itr->second;	}}
 	void read_coverage(string, GFFcont*);
 private:
-	void writeGeneCnts(Chromo*, const vector<int>&, ofstream&, ofstream&, float = 0.01);
+	void writeCtgCov(float, float, string, ofstream&);
+	void writeGeneCnts(Chromo*, const vector<int>&, ofstream&, ofstream&, ofstream&, float = 0.01);
 	void makeWindowCnts(const vector<int>&, ofstream&, const string);
 	CHRidmaps track;
 	float readL;
@@ -73,4 +74,17 @@ private:
 inline bool fileExists(const std::string& name) {
 	struct stat buffer;
 	return (stat(name.c_str(), &buffer) == 0);
+}
+
+double CalcMHWScore(vector<int> scores)
+{
+	double median;
+	size_t size = scores.size();
+	sort(scores.begin(), scores.end());
+	if (size % 2 == 0)	{
+		median = (scores[size / 2 - 1] + scores[size / 2]) / 2;
+	}	else	{
+		median = scores[size / 2];
+	}
+	return median;
 }
